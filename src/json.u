@@ -1,0 +1,120 @@
+use Optional None Some
+use Text concat
+
+type Either a b = Left a | Right b
+
+-- | A JSON value represented as a Unison value.
+type Json.Value = Object [(Text, Json.Value)]
+                | Array [Json.Value]
+                | String Text
+                | Number Text -- there is no Scientific and Float has no Show/Format yet
+                | Bool Boolean
+                | Null
+
+parse : Text -> Optional Json.Value
+parse t =
+  Some (Json.Value.String "TODO")
+
+type Token = Reserved Text -- {}[],
+           | Textual Text -- "..."
+           | Numeric Text -- 997.6
+           | Symbol Text -- null, foo,
+           | Err Text
+
+
+
+lexString : Text -> Either Text (Text, Nat)
+lexString t = Either.Left "TODO lex string"
+
+
+-- for now we do not support whitespace
+lex : Text -> [Token]
+lex t =
+    go : [Token] -> Text -> [Token]
+    go acc t =
+      c = Text.take 1 t
+      case Text.size c of
+        0 -> acc
+        1 ->
+            -- no pattern match on text yet
+            case c of
+              a | a == "{" -> go (acc ++ [Reserved "{"]) (Text.drop 1 t)
+              b | b == "}" -> go (acc ++ [Reserved "}"]) (Text.drop 1 t)
+              c | c == "[" -> go (acc ++ [Reserved "["]) (Text.drop 1 t)
+              d | d == "]" -> go (acc ++ [Reserved "]"]) (Text.drop 1 t)
+              e | e == "," -> go (acc ++ [Reserved ","]) (Text.drop 1 t)
+              z | z == "\"" ->
+                case lexString t of
+                  Either.Right (str, j) -> go (acc ++ [Textual str]) (Text.drop j t)
+                  Either.Left err -> [Token.Err err]
+              _ -> [Token.Err ("Unexpected token: " ++ c)]
+    go [] t
+
+format : Json.Value -> Text
+format v = case v of
+  Json.Value.String s -> "\"" ++ s ++ "\""
+  Json.Value.Number f -> f
+  Json.Value.Bool true -> "true"
+  Json.Value.Bool false -> "false"
+  Json.Value.Null -> "null"
+  Json.Value.Object props -> Text.concatSeq "{" "}" "," (Sequence.map formatProp props)
+  Json.Value.Array els -> Text.concatSeq "[" "]" "," (Sequence.map format els)
+
+formatProp : (Text, Json.Value) -> Text
+formatProp kv = case kv of
+  (k, v) -> "\"" ++ k ++ "\"" ++ ":" ++ (format v)
+
+Sequence.map : (a -> b) -> [a] -> [b]
+Sequence.map f as =
+  go f acc as i = case at i as of
+    None -> acc
+    Some a -> go f (acc `snoc` f a) as (i + 1)
+  go f [] as 0
+
+Sequence.fold : a -> (a -> a -> a) -> [a] -> a
+Sequence.fold zero f as =
+  go acc f as i = case at i as of
+    None -> acc
+    Some t -> go (f acc t ) f as (i + 1)
+  go zero f as 0
+
+Text.concat : [Text] -> Text
+Text.concat ts = Sequence.fold Text.empty (Text.++) ts
+
+Text.concatSeq : Text -> Text -> Text -> [Text] -> Text
+Text.concatSeq head tail sep ts =
+    head ++ Text.concat (Sequence.intersperse sep ts) ++ tail
+
+Sequence.intersperse : a -> [a] -> [a]
+Sequence.intersperse sep as =
+  case at 0 as of
+    None -> []
+    Some a -> Sequence.cons a (Sequence.prependToAll sep (Sequence.drop 1 as))
+
+Sequence.flatMap : (a -> [a]) -> [a] -> [a]
+Sequence.flatMap f as =
+  go f acc as i = case at i as of
+    None -> acc
+    Some a -> go f (acc Sequence.++ (f a) ) as (i + 1)
+  go f [] as 0
+
+-- should not be exported
+Sequence.prependToAll : a -> [a] -> [a]
+Sequence.prependToAll p as = Sequence.flatMap (a -> [p] ++ [a]) as
+
+-- | 'intercalate' @xs xss@ is equivalent to @('concat' ('intersperse' xs xss))@.
+-- It inserts the list @xs@ in between the lists in @xss@ and concatenates the
+-- result.
+--
+-- >>> intercalate ", " ["Lorem", "ipsum", "dolor"]
+-- "Lorem, ipsum, dolor"
+-- intercalate :: [a] -> [[a]] -> [a]
+-- intercalate xs xss = concat (intersperse xs xss)
+
+-- > "\""
+> format (Json.Value.Object [("foo", Json.Value.Number "123"), ("bar", Json.Value.Array [Json.Value.Null, Json.Value.String "test"])])
+
+> lex "{'foo':123, 'bar': [null, 'test']}"
+
+> case (parse "{'foo':123, 'bar': [null, 'test']}") of Some a -> format a
+
