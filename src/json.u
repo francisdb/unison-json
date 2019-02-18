@@ -11,8 +11,8 @@ type Json.Value = Object [(Text, Json.Value)]
                 | Bool Boolean
                 | Null
 
-parse : Text -> Optional Json.Value
-parse t =
+Json.parse : Text -> Optional Json.Value
+Json.parse t =
   Some (Json.Value.String "TODO")
 
 type Token = Reserved Text -- {}[],
@@ -22,14 +22,29 @@ type Token = Reserved Text -- {}[],
            | Err Text
 
 
+lexString : Text -> Either Text (Text, Text)
+lexString t =
+  go : Text -> Text -> Either Text (Text, Text)
+  go acc rest =
+    c = Text.take 1 rest
+    case Text.size c of
+      0 -> Either.Left "Missing closing\""
+      1 ->
+        case c of
+          a | a == "\\" -> go (acc ++ (Text.take 2 rest)) (Text.drop 2 rest)
+          b | b == "\"" -> Either.Right ( acc, Text.drop 1 rest)
+          c             -> go (acc ++ c) (Text.drop 1 rest)
+  -- TODO do we need to validate we start with a "?
+  first = Text.take 1 t
+  case first of
+    a | a == "\"" -> go "" (Text.drop 1 t)
+    b             -> Either.Left "A String should start with \""
 
-lexString : Text -> Either Text (Text, Nat)
-lexString t = Either.Left "TODO lex string"
 
 
 -- for now we do not support whitespace
-lex : Text -> [Token]
-lex t =
+Json.lex : Text -> [Token]
+Json.lex t =
     go : [Token] -> Text -> [Token]
     go acc t =
       c = Text.take 1 t
@@ -42,16 +57,17 @@ lex t =
               b | b == "}" -> go (acc ++ [Reserved "}"]) (Text.drop 1 t)
               c | c == "[" -> go (acc ++ [Reserved "["]) (Text.drop 1 t)
               d | d == "]" -> go (acc ++ [Reserved "]"]) (Text.drop 1 t)
+              a | a == ":" -> go (acc ++ [Reserved ":"]) (Text.drop 1 t)
               e | e == "," -> go (acc ++ [Reserved ","]) (Text.drop 1 t)
               z | z == "\"" ->
                 case lexString t of
-                  Either.Right (str, j) -> go (acc ++ [Textual str]) (Text.drop j t)
+                  Either.Right (str, rest) -> go (acc ++ [Textual str]) rest
                   Either.Left err -> [Token.Err err]
               _ -> [Token.Err ("Unexpected token: " ++ c)]
     go [] t
 
-format : Json.Value -> Text
-format v = case v of
+Json.format : Json.Value -> Text
+Json.format v = case v of
   Json.Value.String s -> "\"" ++ s ++ "\""
   Json.Value.Number f -> f
   Json.Value.Bool true -> "true"
@@ -112,9 +128,15 @@ Sequence.prependToAll p as = Sequence.flatMap (a -> [p] ++ [a]) as
 -- intercalate xs xss = concat (intersperse xs xss)
 
 -- > "\""
-> format (Json.Value.Object [("foo", Json.Value.Number "123"), ("bar", Json.Value.Array [Json.Value.Null, Json.Value.String "test"])])
+> Json.format (Json.Value.Object [("foo", Json.Value.Number "123"), ("bar", Json.Value.Array [Json.Value.Null, Json.Value.String "test"])])
 
-> lex "{'foo':123, 'bar': [null, 'test']}"
+> Json.lex "\"test\""
 
-> case (parse "{'foo':123, 'bar': [null, 'test']}") of Some a -> format a
+> Json.lex "\"test"
+
+> Json.lex "[]"
+
+> Json.lex "{\"foo\":123,\"bar\":[null,\"test\"]}"
+
+> case (Json.parse "{'foo':123,'bar':[null,'test']}") of Some a -> format a
 
