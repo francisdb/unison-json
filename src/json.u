@@ -28,18 +28,32 @@ lexString t =
   go acc rest =
     c = Text.take 1 rest
     case Text.size c of
-      0 -> Either.Left "Missing closing\""
+      0 -> Either.Left "Missing closing \""
       1 ->
         case c of
-          a | a == "\\" -> go (acc ++ (Text.take 2 rest)) (Text.drop 2 rest)
-          b | b == "\"" -> Either.Right ( acc, Text.drop 1 rest)
-          c             -> go (acc ++ c) (Text.drop 1 rest)
-  -- TODO do we need to validate we start with a "?
+          "\\"  -> go (acc ++ (Text.take 2 rest)) (Text.drop 2 rest)
+          "\""  -> Either.Right ( acc, Text.drop 1 rest)
+          other -> go (acc ++ other) (Text.drop 1 rest)
   first = Text.take 1 t
   case first of
-    a | a == "\"" -> go "" (Text.drop 1 t)
-    b             -> Either.Left "A String should start with \""
+    "\"" -> go "" (Text.drop 1 t)
+    _    -> Either.Left "A String should start with \""
 
+lexNumber : Text -> Either Text (Text, Text)
+lexNumber t =
+  go : Text -> Text -> Either Text (Text, Text)
+  go acc rest =
+    c = Text.take 1 rest
+    case Text.size c of
+      0 -> Either.Right ( acc, rest)
+      1 ->
+        case c of
+          n | isNumeric n  -> go (acc ++ n) (Text.drop 1 rest)
+          _                -> Either.Right (acc, rest)
+  first = Text.take 1 t
+  case first of
+    n | isNumeric n -> go "" t
+    _               -> Either.Left "A number should start with a 0-9 or . digit"
 
 
 -- for now we do not support whitespace
@@ -53,15 +67,19 @@ Json.lex t =
         1 ->
             -- no pattern match on text yet
             case c of
-              a | a == "{" -> go (acc ++ [Reserved "{"]) (Text.drop 1 t)
-              b | b == "}" -> go (acc ++ [Reserved "}"]) (Text.drop 1 t)
-              c | c == "[" -> go (acc ++ [Reserved "["]) (Text.drop 1 t)
-              d | d == "]" -> go (acc ++ [Reserved "]"]) (Text.drop 1 t)
-              a | a == ":" -> go (acc ++ [Reserved ":"]) (Text.drop 1 t)
-              e | e == "," -> go (acc ++ [Reserved ","]) (Text.drop 1 t)
-              z | z == "\"" ->
+              "{"  -> go (acc ++ [Reserved "{"]) (Text.drop 1 t)
+              "}"  -> go (acc ++ [Reserved "}"]) (Text.drop 1 t)
+              "["  -> go (acc ++ [Reserved "["]) (Text.drop 1 t)
+              "]"  -> go (acc ++ [Reserved "]"]) (Text.drop 1 t)
+              ":"  -> go (acc ++ [Reserved ":"]) (Text.drop 1 t)
+              ","  -> go (acc ++ [Reserved ","]) (Text.drop 1 t)
+              "\"" ->
                 case lexString t of
                   Either.Right (str, rest) -> go (acc ++ [Textual str]) rest
+                  Either.Left err -> [Token.Err err]
+              n | isNumeric n ->
+                case lexNumber t of
+                  Either.Right (str, rest) -> go (acc ++ [Numeric str]) rest
                   Either.Left err -> [Token.Err err]
               _ -> [Token.Err ("Unexpected token: " ++ c)]
     go [] t
@@ -75,6 +93,21 @@ Json.format v = case v of
   Json.Value.Null -> "null"
   Json.Value.Object props -> Text.concatSeq "{" "}" "," (Sequence.map formatProp props)
   Json.Value.Array els -> Text.concatSeq "[" "]" "," (Sequence.map format els)
+
+isNumeric: Text -> Boolean
+isNumeric t =
+  -- TODO add Exponent notation support
+  case t of
+    "."                              -> true
+    n | (n >= "0") `band` (n <= "9") -> true
+    _                                -> false
+
+
+band : Boolean -> Boolean -> Boolean
+band a b =
+  case (a, b) of
+    (true, true) -> true
+    _            -> false
 
 formatProp : (Text, Json.Value) -> Text
 formatProp kv = case kv of
@@ -127,16 +160,44 @@ Sequence.prependToAll p as = Sequence.flatMap (a -> [p] ++ [a]) as
 -- intercalate :: [a] -> [[a]] -> [a]
 -- intercalate xs xss = concat (intersperse xs xss)
 
--- > "\""
-> Json.format (Json.Value.Object [("foo", Json.Value.Number "123"), ("bar", Json.Value.Array [Json.Value.Null, Json.Value.String "test"])])
+--> "\""
+--> Json.format (Json.Value.Object [("foo", Json.Value.Number "123"), ("bar", Json.Value.Array [Json.Value.Null, Json.Value.String "test"])])
 
-> Json.lex "\"test\""
+--> Json.lex "\"test\""
+--> Json.lex "123"
+--> Json.lex "12x"
+--> Json.lex "[123,456]"
 
-> Json.lex "\"test"
 
-> Json.lex "[]"
+--> [Textual "test"]
 
-> Json.lex "{\"foo\":123,\"bar\":[null,\"test\"]}"
+--> Json.lex "\"test"
 
-> case (Json.parse "{'foo':123,'bar':[null,'test']}") of Some a -> format a
+--> Json.lex "[]"
 
+--> lexString "abc"
+--> lexString "\"abc\",123,true]"
+--> lexString "\"\""
+--> lexString ""
+
+--> lexNumber "3.14"
+--> lexNumber "3.14,"
+> lexNumber "3.14,true]}"
+--> lexNumber "abc"
+--> lexNumber ""
+
+--> Sequence.at 0 ( lex "\"foo\"")
+
+--> Json.lex "[\"test\"]"
+
+--> [Reserved "[", Textual "test", Reserved "]"]
+
+--> Json.lex "{\"foo\":123}"
+
+--> Json.lex "{\"foo\":123,\"bar\":[null,\"test\"]}"
+
+--> case (Json.parse "{\"foo\":123,\"bar\":[null,\"test\"]}") of Some a -> format a
+
+--> Sequence.at 0 (Json.lex "123")
+
+--> Textual "test"
