@@ -3,6 +3,18 @@ use Text concat
 
 type Either a b = Left a | Right b
 
+Either.map : (b -> c) -> Either a b -> Either a c
+Either.map f e =
+  case e of
+    Either.Left a  -> Either.Left a
+    Either.Right b -> Either.Right (f b)
+
+Either.flatmap : (b -> Either a c) -> Either a b -> Either a c
+Either.flatmap f e =
+  case e of
+    Either.Left a  -> Either.Left a
+    Either.Right b -> f b
+
 -- | A JSON value represented as a Unison value.
 type Json.Value = Object [(Text, Json.Value)]
                 | Array [Json.Value]
@@ -18,13 +30,43 @@ Json.parse t =
 type Token = Reserved Text -- {}[],
            | Textual Text -- "..."
            | Numeric Text -- 997.6
-           | Symbol Text -- null, foo,
+           | True
+           | False
+           | Null
            | Err Text
 
+-- in fact for json this can only be null
+lexSymbol : Text -> Either Text (Token, Text)
+lexSymbol t =
+  -- TODO limit parsing to max 5 chars to avoid DOS
+  validate: Text -> Either Text Token
+  validate symbol =
+    case symbol of
+      "null"  -> Either.Right Token.Null
+      "true"  -> Either.Right Token.True
+      "false" -> Either.Right Token.False
+      other   -> Either.Left ("Unknown symbol: " ++ other)
 
-lexString : Text -> Either Text (Text, Text)
+  go : Text -> Text -> Either Text (Token, Text)
+  go acc rest =
+    tupleLambda a = (a, rest)
+
+    c = Text.take 1 rest
+    case Text.size c of
+      0 -> map tupleLambda (validate acc)
+      1 ->
+        case c of
+          "]"   -> map tupleLambda (validate acc)
+          "}"   -> map tupleLambda (validate acc)
+          "}"   -> map tupleLambda (validate acc)
+          ":"   -> map tupleLambda (validate acc)
+          ","   -> map tupleLambda (validate acc)
+          other -> go (acc ++ other) (Text.drop 1 rest)
+  go "" t
+
+lexString : Text -> Either Text (Token, Text)
 lexString t =
-  go : Text -> Text -> Either Text (Text, Text)
+  go : Text -> Text -> Either Text (Token, Text)
   go acc rest =
     c = Text.take 1 rest
     case Text.size c of
@@ -32,24 +74,28 @@ lexString t =
       1 ->
         case c of
           "\\"  -> go (acc ++ (Text.take 2 rest)) (Text.drop 2 rest)
-          "\""  -> Either.Right ( acc, Text.drop 1 rest)
+          "\""  -> Either.Right (Textual acc, Text.drop 1 rest)
           other -> go (acc ++ other) (Text.drop 1 rest)
   first = Text.take 1 t
   case first of
     "\"" -> go "" (Text.drop 1 t)
     _    -> Either.Left "A String should start with \""
 
-lexNumber : Text -> Either Text (Text, Text)
+lexNumber : Text -> Either Text (Token, Text)
 lexNumber t =
-  go : Text -> Text -> Either Text (Text, Text)
+  go : Text -> Text -> Either Text (Token, Text)
   go acc rest =
     c = Text.take 1 rest
     case Text.size c of
-      0 -> Either.Right ( acc, rest)
+      0 -> Either.Right (Numeric acc, rest)
       1 ->
-        case c of
-          n | isNumeric n  -> go (acc ++ n) (Text.drop 1 rest)
-          _                -> Either.Right (acc, rest)
+        if (isNumeric c) then
+          go (acc ++ c) (Text.drop 1 rest)
+        else
+          Either.Right (Numeric acc, rest)
+--        case c of
+--          n | isNumeric n  -> go (acc ++ n) (Text.drop 1 rest)
+--          _                -> Either.Right (Numeric acc, rest)
   first = Text.take 1 t
   case first of
     n | isNumeric n -> go "" t
@@ -75,14 +121,18 @@ Json.lex t =
               ","  -> go (acc ++ [Reserved ","]) (Text.drop 1 t)
               "\"" ->
                 case lexString t of
-                  Either.Right (str, rest) -> go (acc ++ [Textual str]) rest
+                  Either.Right (token, rest) -> go (acc ++ [token]) rest
                   Either.Left err -> [Token.Err err]
               n | isNumeric n ->
                 case lexNumber t of
-                  Either.Right (str, rest) -> go (acc ++ [Numeric str]) rest
+                  Either.Right (token, rest) -> go (acc ++ [token]) rest
                   Either.Left err -> [Token.Err err]
-              _ -> [Token.Err ("Unexpected token: " ++ c)]
+              other ->
+                case lexSymbol t of
+                  Either.Right (token, rest) -> go (acc ++ [token]) rest
+                  Either.Left err -> [Token.Err err]
     go [] t
+
 
 Json.format : Json.Value -> Text
 Json.format v = case v of
@@ -128,7 +178,7 @@ Sequence.fold zero f as =
   go zero f as 0
 
 Text.concat : [Text] -> Text
-Text.concat ts = Sequence.fold Text.empty (Text.++) ts
+Text.concat ts = Sequence.fold "" (Text.++) ts
 
 Text.concatSeq : Text -> Text -> Text -> [Text] -> Text
 Text.concatSeq head tail sep ts =
@@ -162,6 +212,11 @@ Sequence.prependToAll p as = Sequence.flatMap (a -> [p] ++ [a]) as
 
 --> "\""
 --> Json.format (Json.Value.Object [("foo", Json.Value.Number "123"), ("bar", Json.Value.Array [Json.Value.Null, Json.Value.String "test"])])
+--> Json.format (Json.Value.String "123")
+--> Json.format (Json.Value.Array [])
+--> Text.concat ["foo", "bar"]
+
+--> Sequence.map format [Json.Value.String "123"]
 
 --> Json.lex "\"test\""
 --> Json.lex "123"
@@ -171,12 +226,8 @@ Sequence.prependToAll p as = Sequence.flatMap (a -> [p] ++ [a]) as
 
 --> [Textual "test"]
 
---> Json.lex "\"test"
-
---> Json.lex "[]"
-
 --> lexString "abc"
---> lexString "\"abc\",123,true]"
+> lexString "\"abc\",123,true]"
 --> lexString "\"\""
 --> lexString ""
 
@@ -185,19 +236,32 @@ Sequence.prependToAll p as = Sequence.flatMap (a -> [p] ++ [a]) as
 > lexNumber "3.14,true]}"
 --> lexNumber "abc"
 --> lexNumber ""
+> lexSymbol "true"
+> lexSymbol "null,true]}"
+> lexSymbol "null]}"
+> lexSymbol "abc"
+
 
 --> Sequence.at 0 ( lex "\"foo\"")
 
---> Json.lex "[\"test\"]"
+> Json.lex "[\"test\"]"
+> Json.lex "[\"test\",\"bar\"]"
+> Json.lex "[]"
+> Json.lex "\"test\""
+--> Json.lex "\"test"
+> Json.lex "{\"foo\":123}"
+> Json.lex "true"
+--> Json.lex "[null]"
+--> Json.lex "{\"foo\":123,\"bar\":[null,\"test\"]}"
 
 --> [Reserved "[", Textual "test", Reserved "]"]
 
---> Json.lex "{\"foo\":123}"
 
---> Json.lex "{\"foo\":123,\"bar\":[null,\"test\"]}"
 
 --> case (Json.parse "{\"foo\":123,\"bar\":[null,\"test\"]}") of Some a -> format a
 
 --> Sequence.at 0 (Json.lex "123")
 
---> Textual "test"
+> [Textual "test"]
+> Err "t"
+
