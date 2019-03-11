@@ -5,111 +5,113 @@ use Text concat
 
 type Either a b = Left a | Right b
 
-Either.map : (b -> c) -> Either a b -> Either a c
-Either.map f e =
-  case e of
-    Either.Left a  -> Either.Left a
-    Either.Right b -> Either.Right (f b)
+namespace Either where
 
-Either.flatmap : (b -> Either a c) -> Either a b -> Either a c
-Either.flatmap f e =
-  case e of
-    Either.Left a  -> Either.Left a
-    Either.Right b -> f b
+  map : (b -> c) -> Either a b -> Either a c
+  map f e =
+    case e of
+      Either.Left a  -> Either.Left a
+      Either.Right b -> Either.Right (f b)
 
-(Boolean.==) : Boolean -> Boolean -> Boolean
-(Boolean.==) a b =
-   case (a, b) of
-     (true, true)   -> true
-     (false, false) -> true
-     _              -> false
+  flatmap : (b -> Either a c) -> Either a b -> Either a c
+  flatmap f e =
+    case e of
+      Either.Left a  -> Either.Left a
+      Either.Right b -> f b
 
--- TODO would we need a lazy version that avoids evaluating the second arg if not needed?
-(Boolean.&&) : Boolean -> Boolean -> Boolean
-(Boolean.&&) a b =
-  case (a, b) of
-    (true, true) -> true
-    _            -> false
+namespace Boolean where
 
-Sequence.map : (a -> b) -> [a] -> [b]
-Sequence.map f as =
-  go f acc i = case at i as of
-    None -> acc
-    Some a -> go f (acc `snoc` f a) (i + 1)
-  go f [] 0
+  (==) : Boolean -> Boolean -> Boolean
+  (==) a b =
+    case (a, b) of
+      (true, true)   -> true
+      (false, false) -> true
+      _              -> false
 
-Sequence.foldl : (b -> a -> b) -> b -> [a] -> b
-Sequence.foldl f b s =
-  go i acc = case Sequence.at i s of
-    Some a -> go (i + 1) (f acc a)
-    None -> acc
-  go 0 b
+  -- TODO would we need a lazy version that avoids evaluating the second arg if not needed?
+  (&&) : Boolean -> Boolean -> Boolean
+  (&&) a b =
+    case (a, b) of
+      (true, true) -> true
+      _            -> false
 
-(Sequence.==) : (a -> a -> Boolean) -> [a] -> [a] -> Boolean
-(Sequence.==) eq s1 s2 =
-  go i = case (Sequence.at i s1, Sequence.at i s2) of
-    (Some e1, Some e2) ->
-      if (eq e1 e2) then
-        (go (i + 1))
-      else
-        false
-    (None, None) -> true
-    _            -> false
-  go 0
+namespace Sequence where
 
-Sequence.intersperse : a -> [a] -> [a]
-Sequence.intersperse sep as =
-  case Sequence.at 0 as of
-    None -> []
-    Some a -> Sequence.cons a (Sequence.prependToAll sep (Sequence.drop 1 as))
+  map : (a -> b) -> [a] -> [b]
+  map f as =
+    go f acc i = case at i as of
+      None -> acc
+      Some a -> go f (acc `snoc` f a) (i + 1)
+    go f [] 0
 
-Sequence.flatMap : (a -> [a]) -> [a] -> [a]
-Sequence.flatMap f as =
-  go f acc as i = case at i as of
-    None -> acc
-    Some a -> go f (acc Sequence.++ (f a) ) as (i + 1)
-  go f [] as 0
+  foldl : (b -> a -> b) -> b -> [a] -> b
+  foldl f b s =
+    go i acc = case Sequence.at i s of
+      Some a -> go (i + 1) (f acc a)
+      None -> acc
+    go 0 b
 
--- should not be exported
-Sequence.prependToAll : a -> [a] -> [a]
-Sequence.prependToAll p as = Sequence.flatMap (a -> [p] ++ [a]) as
+  (==) : (a -> a -> Boolean) -> [a] -> [a] -> Boolean
+  (==) eq s1 s2 =
+    go i = case (Sequence.at i s1, Sequence.at i s2) of
+      (Some e1, Some e2) ->
+        if (eq e1 e2) then
+          (go (i + 1))
+        else
+          false
+      (None, None) -> true
+      _            -> false
+    go 0
 
-Text.concat : [Text] -> Text
-Text.concat ts = Sequence.foldl (Text.++) "" ts
+  intersperse : a -> [a] -> [a]
+  intersperse sep as =
+    case Sequence.at 0 as of
+      None -> []
+      Some a -> Sequence.cons a (Sequence.Internal.prependToAll sep (Sequence.drop 1 as))
 
-Text.concatSeq : Text -> Text -> Text -> [Text] -> Text
-Text.concatSeq head tail sep ts =
+  flatMap : (a -> [a]) -> [a] -> [a]
+  flatMap f as =
+    go f acc as i = case at i as of
+      None -> acc
+      Some a -> go f (acc Sequence.++ (f a) ) as (i + 1)
+    go f [] as 0
+
+  namespace Internal where
+
+    -- should not be exported
+    prependToAll : a -> [a] -> [a]
+    prependToAll p as = Sequence.flatMap (a -> [p] ++ [a]) as
+
+namespace Text where
+
+  concat : [Text] -> Text
+  concat ts = Sequence.foldl (Text.++) "" ts
+
+  concatSeq : Text -> Text -> Text -> [Text] -> Text
+  concatSeq head tail sep ts =
     head ++ Text.concat (Sequence.intersperse sep ts) ++ tail
 
-(Pair.==) : (a -> a -> Boolean) -> (b -> b -> Boolean) -> (a, b) -> (a, b) -> Boolean
-(Pair.==) aeq beq p1 p2 =
-  case (p1, p2) of
-    ((a1, b1),(a2, b2)) -> (aeq a1 a2) && (beq b1 b2)
+namespace Pair where
 
+  (==) : (a -> a -> Boolean) -> (b -> b -> Boolean) -> (a, b) -> (a, b) -> Boolean
+  (==) aeq beq p1 p2 =
+    case (p1, p2) of
+      ((a1, b1),(a2, b2)) -> (aeq a1 a2) && (beq b1 b2)
 
+namespace Test where
 
--- | 'intercalate' @xs xss@ is equivalent to @('concat' ('intersperse' xs xss))@.
--- It inserts the list @xs@ in between the lists in @xss@ and concatenates the
--- result.
---
--- >>> intercalate ", " ["Lorem", "ipsum", "dolor"]
--- "Lorem, ipsum, dolor"
--- intercalate :: [a] -> [[a]] -> [a]
--- intercalate xs xss = concat (intersperse xs xss)
+    --Test.test : Text (Text, Boolean) -> Text
+    --Test.test text ass =
+    --  case ass of
+    --    (t, false) -> ""
+    --    (t, true) -> ""
 
-
---Test.test : Text (Text, Boolean) -> Text
---Test.test text ass =
---  case ass of
---    (t, false) -> ""
---    (t, true) -> ""
-
-Test.test : Text -> Boolean -> (Text, Boolean)
-Test.test text assertion =
-  if assertion then
-    ("✅ " ++ text, true)
-  else
-    ("❌" ++ text, false)
+  test : Text -> Boolean -> (Text, Boolean)
+  test text assertion =
+    if assertion then
+      ("✅ " ++ text, true)
+    else
+      ("❌" ++ text, false)
 
 
 -- =======================================================================
@@ -122,28 +124,56 @@ type Json.Value = Object [(Text, Json.Value)]
                 | Bool Boolean
                 | Null
 
-(Json.Value.==) : Json.Value -> Json.Value -> Boolean
-(Json.Value.==) a b =
-  case (a,b) of
-    (Json.Value.Null, Json.Value.Null)             -> true
-    (Json.Value.Bool b1, Json.Value.Bool b2)       -> b1 == b2
-    (Json.Value.String s1, Json.Value.String s2)   -> s1 == s2
-    (Json.Value.Number s1, Json.Value.Number s2)   -> s1 == s2
-    (Json.Value.Array a1, Json.Value.Array a2)     -> a1 == a2
-    (Json.Value.Object o1, Json.Value.Object o2)   -> o1 == o2 -- TODO we should sort by key first
-    _                                              -> false
+namespace Json where
 
-(Json.Internal.JsonArrCmp.==) : [Json.Value] -> [Json.Value]-> Boolean
-(Json.Internal.JsonArrCmp.==) = (Sequence.==) (Json.Value.==)
+  (Value.==) : Json.Value -> Json.Value -> Boolean
+  (Value.==) a b =
+    case (a,b) of
+      (Json.Value.Null, Json.Value.Null)             -> true
+      (Json.Value.Bool b1, Json.Value.Bool b2)       -> b1 == b2
+      (Json.Value.String s1, Json.Value.String s2)   -> s1 == s2
+      (Json.Value.Number s1, Json.Value.Number s2)   -> s1 == s2
+      (Json.Value.Array a1, Json.Value.Array a2)     -> a1 == a2
+      (Json.Value.Object o1, Json.Value.Object o2)   -> o1 == o2 -- TODO we should sort by key first
+      _                                              -> false
 
-(Json.Internal.JsonObjCmp.==) : [(Text, Json.Value)] -> [(Text, Json.Value)] -> Boolean
-(Json.Internal.JsonObjCmp.==) = (Sequence.==) ((Pair.==) (Text.==) (Json.Value.==))
+  format : Json.Value -> Text
+  format v = case v of
+    Json.Value.String s -> "\"" ++ s ++ "\""
+    Json.Value.Number f -> f
+    Json.Value.Bool true -> "true"
+    Json.Value.Bool false -> "false"
+    Json.Value.Null -> "null"
+    Json.Value.Object props -> Text.concatSeq "{" "}" "," (Sequence.map Internal.formatProp props)
+    Json.Value.Array els -> Text.concatSeq "[" "]" "," (Sequence.map Json.format els)
 
-Json.parse : Text -> Optional Json.Value
-Json.parse t =
-  lexed = Json.lex t
-  result = parseRoot lexed
-  Some result
+  parse : Text -> Optional Json.Value
+  parse t =
+    lexed = Json.lex t
+    result = parseRoot lexed
+    Some result
+
+  parseRoot : [Json.Internal.Token] -> Json.Value
+  parseRoot tokens =
+    first = Sequence.at 0 tokens
+    case first of
+      Optional.Some (Json.Internal.Token.Reserved "{") -> Json.parseObject tokens
+      Optional.Some (Json.Internal.Token.Reserved "[") -> Json.parseArray tokens
+      _            -> Json.Value.String "Json should always start with [ or ("
+
+  parseDeep : [Json.Internal.Token] -> Json.Value
+  parseDeep tokens =
+    first = Sequence.at 0 tokens
+    case first of
+      Optional.Some (Json.Internal.Token.Reserved "{") -> Json.parseObject tokens
+      Optional.Some (Json.Internal.Token.Reserved "[") -> Json.parseArray tokens
+      _            -> Json.Value.String "Json should always start with [ or ("
+
+  namespace Internal where
+
+    formatProp : (Text, Json.Value) -> Text
+    formatProp kv = case kv of
+      (k, v) -> "\"" ++ k ++ "\"" ++ ":" ++ (Json.format v)
 
 type Json.Internal.Token = Reserved Text -- {}[],
                          | Textual Text -- "..."
@@ -165,8 +195,8 @@ type Json.Internal.Token = Reserved Text -- {}[],
     (Json.Internal.Token.Err t1, Json.Internal.Token.Err t2)           -> t1 == t2
     _                                                                  -> false
 
-(Json.Internal.TokenArrCmp.==) : [Json.Internal.Token] -> [Json.Internal.Token] -> Boolean
-(Json.Internal.TokenArrCmp.==) = (Sequence.==) (Json.Internal.Token.==)
+(Json.Internal.TokenArrEq.==) : [Json.Internal.Token] -> [Json.Internal.Token] -> Boolean
+(Json.Internal.TokenArrEq.==) = (Sequence.==) (Json.Internal.Token.==)
 
 
 isNumeric: Text -> Boolean
@@ -330,35 +360,18 @@ Json.parseObject tokens = Json.Value.String "TODO object parse"
 --
 --    raise Exception('Expected end-of-object brace')
 
-Json.parseRoot : [Json.Internal.Token] -> Json.Value
-Json.parseRoot tokens =
-  first = Sequence.at 0 tokens
-  case first of
-    Optional.Some (Json.Internal.Token.Reserved "{") -> Json.parseObject tokens
-    Optional.Some (Json.Internal.Token.Reserved "[") -> Json.parseArray tokens
-    _            -> Json.Value.String "Json should always start with [ or ("
 
-Json.parseDeep : [Json.Internal.Token] -> Json.Value
-Json.parseDeep tokens =
-  first = Sequence.at 0 tokens
-  case first of
-    Optional.Some (Json.Internal.Token.Reserved "{") -> Json.parseObject tokens
-    Optional.Some (Json.Internal.Token.Reserved "[") -> Json.parseArray tokens
-    _            -> Json.Value.String "Json should always start with [ or ("
 
-Json.format : Json.Value -> Text
-Json.format v = case v of
-  Json.Value.String s -> "\"" ++ s ++ "\""
-  Json.Value.Number f -> f
-  Json.Value.Bool true -> "true"
-  Json.Value.Bool false -> "false"
-  Json.Value.Null -> "null"
-  Json.Value.Object props -> Text.concatSeq "{" "}" "," (Sequence.map formatProp props)
-  Json.Value.Array els -> Text.concatSeq "[" "]" "," (Sequence.map Json.format els)
 
-formatProp : (Text, Json.Value) -> Text
-formatProp kv = case kv of
-  (k, v) -> "\"" ++ k ++ "\"" ++ ":" ++ (Json.format v)
+namespace Json.Internal where
+
+  (JsonArrEq.==) : [Json.Value] -> [Json.Value]-> Boolean
+  (JsonArrEq.==) = (Sequence.==) (Json.Value.==)
+
+  (JsonObjEq.==) : [(Text, Json.Value)] -> [(Text, Json.Value)] -> Boolean
+  (JsonObjEq.==) = (Sequence.==) ((Pair.==) (Text.==) (Json.Value.==))
+
+
 
 
 
@@ -442,3 +455,5 @@ expected = [ Json.Internal.Token.Reserved "{"
 > Json.Value.Array [Json.Value.Null] == Json.Value.Array [Json.Value.Null]
 
 > (1,2) == (1,2)
+
+> true == false
