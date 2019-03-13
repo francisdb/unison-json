@@ -1,5 +1,8 @@
 use Optional None Some
 use Text concat
+use Either Left Right
+
+use Json.Internal.Token Reserved Null True False Numeric Textual Err
 
 -- ===================== this stuff is missing in the stdlib =====
 
@@ -10,14 +13,14 @@ namespace Either where
   map : (b -> c) -> Either a b -> Either a c
   map f e =
     case e of
-      Either.Left a  -> Either.Left a
-      Either.Right b -> Either.Right (f b)
+      Left a  -> Left a
+      Right b -> Right (f b)
 
   flatmap : (b -> Either a c) -> Either a b -> Either a c
   flatmap f e =
     case e of
-      Either.Left a  -> Either.Left a
-      Either.Right b -> f b
+      Left a  -> Left a
+      Right b -> f b
 
 namespace Boolean where
 
@@ -98,6 +101,17 @@ namespace Pair where
     case (p1, p2) of
       ((a1, b1),(a2, b2)) -> (aeq a1 a2) && (beq b1 b2)
 
+  fst : (a,b) -> a
+  fst p = case p of
+    (a,b) -> a
+
+  snd : (a,b) -> b
+  snd p = case p of
+    (a,b) -> b
+
+  with : b -> a -> (a, b)
+  with b a = (a, b)
+
 namespace Test where
 
     --Test.test : Text (Text, Boolean) -> Text
@@ -147,27 +161,25 @@ namespace Json where
     Json.Value.Object props -> Text.concatSeq "{" "}" "," (Sequence.map Internal.formatProp props)
     Json.Value.Array els -> Text.concatSeq "[" "]" "," (Sequence.map Json.format els)
 
-  parse : Text -> Optional Json.Value
+  parse : Text -> Either Text Json.Value
   parse t =
     lexed = Json.lex t
-    result = parseRoot lexed
-    Some result
+    Either.flatmap (validateRemainingEmpty) (parseTokens lexed)
 
-  parseRoot : [Json.Internal.Token] -> Json.Value
-  parseRoot tokens =
+  validateRemainingEmpty : (a, [Json.Internal.Token]) -> Either Text a
+  validateRemainingEmpty tokens = case tokens of
+    (value, rest) | Sequence.size rest == 0 -> Right value
+    (_    , rest) -> Left "Unexpected tokens found after root element" --TODO point to the location
+
+  parseTokens : [Json.Internal.Token] -> Either Text (Json.Value, [Json.Internal.Token])
+  parseTokens tokens =
     first = Sequence.at 0 tokens
     case first of
-      Optional.Some (Json.Internal.Token.Reserved "{") -> Json.parseObject tokens
-      Optional.Some (Json.Internal.Token.Reserved "[") -> Json.parseArray tokens
-      _            -> Json.Value.String "Json should always start with [ or ("
+      Some (Reserved "{") -> Json.parseObject (Sequence.drop 1 tokens)
+      Some (Reserved "[") -> Json.parseArray (Sequence.drop 1 tokens)
+      Some (other)        -> Either.map (Pair.with (Sequence.drop 1 tokens)) (Json.parseValue other)
+      None                -> Left "Can't parse empty document to JSON"
 
-  parseDeep : [Json.Internal.Token] -> Json.Value
-  parseDeep tokens =
-    first = Sequence.at 0 tokens
-    case first of
-      Optional.Some (Json.Internal.Token.Reserved "{") -> Json.parseObject tokens
-      Optional.Some (Json.Internal.Token.Reserved "[") -> Json.parseArray tokens
-      _            -> Json.Value.String "Json should always start with [ or ("
 
   namespace Internal where
 
@@ -175,7 +187,7 @@ namespace Json where
     formatProp kv = case kv of
       (k, v) -> "\"" ++ k ++ "\"" ++ ":" ++ (Json.format v)
 
-type Json.Internal.Token = Reserved Text -- {}[],
+type Json.Internal.Token = Reserved Text -- {}[],:
                          | Textual Text -- "..."
                          | Numeric Text -- 997.6
                          | True
@@ -186,13 +198,13 @@ type Json.Internal.Token = Reserved Text -- {}[],
 (Json.Internal.Token.==) : Json.Internal.Token -> Json.Internal.Token -> Boolean
 (Json.Internal.Token.==) a b =
   case (a,b) of
-    (Json.Internal.Token.Null, Json.Internal.Token.Null)               -> true
-    (Json.Internal.Token.True, Json.Internal.Token.True)               -> true
-    (Json.Internal.Token.False, Json.Internal.Token.False)             -> false
-    (Json.Internal.Token.Reserved t1, Json.Internal.Token.Reserved t2) -> t1 == t2
-    (Json.Internal.Token.Textual t1, Json.Internal.Token.Textual t2)   -> t1 == t2
-    (Json.Internal.Token.Numeric n1, Json.Internal.Token.Numeric n2)   -> n1 == n2
-    (Json.Internal.Token.Err t1, Json.Internal.Token.Err t2)           -> t1 == t2
+    (Null, Null)               -> true
+    (True, True)               -> true
+    (False, False)             -> false
+    (Reserved t1, Reserved t2) -> t1 == t2
+    (Textual t1, Textual t2)   -> t1 == t2
+    (Numeric n1, Numeric n2)   -> n1 == n2
+    (Err t1, Err t2)           -> t1 == t2
     _                                                                  -> false
 
 (Json.Internal.TokenArrEq.==) : [Json.Internal.Token] -> [Json.Internal.Token] -> Boolean
@@ -216,10 +228,10 @@ lexSymbol t =
   validate: Text -> Either Text Json.Internal.Token
   validate symbol =
     case symbol of
-      "null"  -> Either.Right Json.Internal.Token.Null
-      "true"  -> Either.Right Json.Internal.Token.True
-      "false" -> Either.Right Json.Internal.Token.False
-      other   -> Either.Left ("Unknown symbol: " ++ other)
+      "null"  -> Right Null
+      "true"  -> Right True
+      "false" -> Right False
+      other   -> Left ("Unknown symbol: " ++ other)
 
   go : Text -> Text -> Either Text (Json.Internal.Token, Text)
   go acc rest =
@@ -245,16 +257,16 @@ lexString t =
   go acc rest =
     c = Text.take 1 rest
     case Text.size c of
-      0 -> Either.Left "Missing closing \""
+      0 -> Left "Missing closing \""
       1 ->
         case c of
           "\\"  -> go (acc ++ (Text.take 2 rest)) (Text.drop 2 rest)
-          "\""  -> Either.Right (Textual acc, Text.drop 1 rest)
+          "\""  -> Right (Textual acc, Text.drop 1 rest)
           other -> go (acc ++ other) (Text.drop 1 rest)
   first = Text.take 1 t
   case first of
     "\"" -> go "" (Text.drop 1 t)
-    _    -> Either.Left "A String should start with \""
+    _    -> Left "A String should start with \""
 
 lexNumber : Text -> Either Text (Json.Internal.Token, Text)
 lexNumber t =
@@ -262,15 +274,15 @@ lexNumber t =
   go acc rest =
     c = Text.take 1 rest
     case Text.size c of
-      0 -> Either.Right (Numeric acc, rest)
+      0 -> Right (Numeric acc, rest)
       1 ->
         case c of
           n | isNumeric n  -> go (acc ++ n) (Text.drop 1 rest)
-          _                -> Either.Right (Numeric acc, rest)
+          _                -> Right (Numeric acc, rest)
   first = Text.take 1 t
   case first of
     n | isNumeric n -> go "" t
-    _               -> Either.Left "A number should start with a 0-9 or . digit"
+    _               -> Left "A number should start with a 0-9 or . digit"
 
 
 -- for now we do not support whitespace
@@ -292,44 +304,48 @@ Json.lex t =
               ","  -> go (acc ++ [Reserved ","]) (Text.drop 1 t)
               "\"" ->
                 case lexString t of
-                  Either.Right (token, rest) -> go (acc ++ [token]) rest
-                  Either.Left err -> [Json.Internal.Token.Err err]
+                  Right (token, rest) -> go (acc ++ [token]) rest
+                  Left err -> [Err err]
               n | isNumeric n ->
                 case lexNumber t of
-                  Either.Right (token, rest) -> go (acc ++ [token]) rest
-                  Either.Left err -> [Json.Internal.Token.Err err]
+                  Right (token, rest) -> go (acc ++ [token]) rest
+                  Left err -> [Err err]
               other ->
                 case lexSymbol t of
-                  Either.Right (token, rest) -> go (acc ++ [token]) rest
-                  Either.Left err -> [Json.Internal.Token.Err err]
+                  Right (token, rest) -> go (acc ++ [token]) rest
+                  Left err -> [Err err]
     go [] t
 
+Json.parseValue : Json.Internal.Token -> Either Text Json.Value
+Json.parseValue t = case t of
+  Textual t  -> Right (Json.Value.String t)
+  Numeric n  -> Right (Json.Value.Number n)
+  Null       -> Right Json.Value.Null
+  True       -> Right (Json.Value.Bool true)
+  False      -> Right (Json.Value.Bool false)
+  Reserved r -> Left ("Unexpected token: " ++ r)
+  Err e      -> Left e
 
-Json.parseArray : [Json.Internal.Token] -> Json.Value
-Json.parseArray tokens = Json.Value.String "TODO array parse"
---      json_array = []
---
---      t = tokens[0]
---      if t == JSON_RIGHTBRACKET:
---          return json_array, tokens[1:]
---
---      while True:
---          json, tokens = parse(tokens)
---          json_array.append(json)
---
---          t = tokens[0]
---          if t == JSON_RIGHTBRACKET:
---              return json_array, tokens[1:]
---          elif t != JSON_COMMA:
---              raise Exception('Expected comma after object in array')
---          else:
---              tokens = tokens[1:]
---
---      raise Exception('Expected end-of-array bracket')
+Json.parseArray : [Json.Internal.Token] -> Either Text (Json.Value, [Json.Internal.Token])
+Json.parseArray tokens =
+  go : [Json.Value] -> [Json.Internal.Token] -> Either Text (Json.Value, [Json.Internal.Token])
+  go acc tokens =
+    case (Json.parseTokens tokens) of
+      Right (el, tokens') ->
+        t = Sequence.at 0 tokens'
+        acc' = acc `snoc` el
+        case t of
+          None                                    -> Left "unclosed object"
+          Some (Reserved ",") -> go acc' (Sequence.drop 1 tokens')
+          Some (Reserved "]") -> Right (Json.Value.Array acc', Sequence.drop 1 tokens')
+      Left err -> Left err
+  case (Sequence.at 0) tokens of
+    Some (Reserved "]") -> Right (Json.Value.Array [], Sequence.drop 1 tokens)
+    _ -> go [] tokens
 
+Json.parseObject : [Json.Internal.Token] -> Either Text  (Json.Value, [Json.Internal.Token])
+Json.parseObject tokens = Left "TODO"
 
-Json.parseObject : [Json.Internal.Token] -> Json.Value
-Json.parseObject tokens = Json.Value.String "TODO object parse"
 --    json_object = {}
 --
 --    t = tokens[0]
@@ -374,6 +390,8 @@ namespace Json.Internal where
 
 
 
+-- ==== Tests below, to be transformed in real unit tests =======================
+
 
 > Json.format (Json.Value.Object [("foo", Json.Value.Number "123"), ("bar", Json.Value.Array [Json.Value.Null, Json.Value.String "test"])])
 --> Json.format (Json.Value.String "123")
@@ -417,19 +435,19 @@ namespace Json.Internal where
 --> Json.lex "true"
 --> Json.lex "[null]"
 
-expected = [ Json.Internal.Token.Reserved "{"
-           , Json.Internal.Token.Textual "foo"
-           , Json.Internal.Token.Reserved ":"
-           , Json.Internal.Token.Numeric "123"
-           , Json.Internal.Token.Reserved ","
-           , Json.Internal.Token.Textual "bar"
-           , Json.Internal.Token.Reserved ":"
-           , Json.Internal.Token.Reserved "["
-           , Json.Internal.Token.Null
-           , Json.Internal.Token.Reserved ","
-           , Json.Internal.Token.Textual "test"
-           , Json.Internal.Token.Reserved "]"
-           , Json.Internal.Token.Reserved "}"
+expected = [ Reserved "{"
+           , Textual "foo"
+           , Reserved ":"
+           , Numeric "123"
+           , Reserved ","
+           , Textual "bar"
+           , Reserved ":"
+           , Reserved "["
+           , Null
+           , Reserved ","
+           , Textual "test"
+           , Reserved "]"
+           , Reserved "}"
            ]
 
 > test "Lexing json object" ((Json.lex "{\"foo\":123,\"bar\":[null,\"test\"]}") == expected)
@@ -437,9 +455,6 @@ expected = [ Json.Internal.Token.Reserved "{"
 
 --> [Reserved "[", Textual "test", Reserved "]"]
 
-
-
---> case (Json.parse "{\"foo\":123,\"bar\":[null,\"test\"]}") of Some a -> Json.format a
 --> format (Json.Value.Array [])
 --> Sequence.at 0 (Json.lex "123")
 
@@ -452,8 +467,17 @@ expected = [ Json.Internal.Token.Reserved "{"
 --> (Json.Value.==) Json.Value.Null Json.Value.Null
 --> Json.Value.Null == Json.Value.Null
 
-> Json.Value.Array [Json.Value.Null] == Json.Value.Array [Json.Value.Null]
+--> Json.Value.Array [Json.Value.Null] == Json.Value.Array [Json.Value.Null]
 
-> (1,2) == (1,2)
+--> Json.parse "123"
+--> Json.parse ":"
+--> Json.parse ""
+> Json.parse "null"
+> Json.parse "true"
+> Json.parse "[]"
+> Json.parse "[1,2,[true,false]]"
+> Json.parse "{\"foo\":123,\"bar\":[null,\"test\"]}"
+> Json.parse "\"\\\"\"" -- FIXME handle escapes, see https://json.org/
 
-> true == false
+
+--> case (Json.parse "{\"foo\":123,\"bar\":[null,\"test\"]}") of Some a -> Json.format a
