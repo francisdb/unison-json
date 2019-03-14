@@ -22,6 +22,9 @@ namespace Either where
       Left a  -> Left a
       Right b -> f b
 
+  (>>=) : Either a b -> ( b -> Either a c) -> Either a c
+  (>>=) e f = flatmap f e
+
 namespace Boolean where
 
   (==) : Boolean -> Boolean -> Boolean
@@ -235,19 +238,17 @@ lexSymbol t =
 
   go : Text -> Text -> Either Text (Json.Internal.Token, Text)
   go acc rest =
-    -- TODO was unable to define his in a lambda
-    tupleLambda a = (a, rest)
 
     c = Text.take 1 rest
     case Text.size c of
-      0 -> map tupleLambda (validate acc)
+      0 -> map (Pair.with rest) (validate acc)
       1 ->
         case c of
-          "]"   -> map tupleLambda (validate acc)
-          "}"   -> map tupleLambda (validate acc)
-          "}"   -> map tupleLambda (validate acc)
-          ":"   -> map tupleLambda (validate acc)
-          ","   -> map tupleLambda (validate acc)
+          "]"   -> map (Pair.with rest) (validate acc)
+          "}"   -> map (Pair.with rest) (validate acc)
+          "}"   -> map (Pair.with rest) (validate acc)
+          ":"   -> map (Pair.with rest) (validate acc)
+          ","   -> map (Pair.with rest) (validate acc)
           other -> go (acc ++ other) (Text.drop 1 rest)
   go "" t
 
@@ -330,54 +331,40 @@ Json.parseArray : [Json.Internal.Token] -> Either Text (Json.Value, [Json.Intern
 Json.parseArray tokens =
   go : [Json.Value] -> [Json.Internal.Token] -> Either Text (Json.Value, [Json.Internal.Token])
   go acc tokens =
-    case (Json.parseTokens tokens) of
-      Right (el, tokens') ->
-        t = Sequence.at 0 tokens'
-        acc' = acc `snoc` el
-        case t of
-          None                                    -> Left "unclosed object"
-          Some (Reserved ",") -> go acc' (Sequence.drop 1 tokens')
-          Some (Reserved "]") -> Right (Json.Value.Array acc', Sequence.drop 1 tokens')
-      Left err -> Left err
+    parseRest et = case et of (el, tokens') ->
+      t = Sequence.at 0 tokens'
+      acc' = acc `snoc` el
+      case t of
+        None                -> Left "unclosed object"
+        Some (Reserved ",") -> go acc' (Sequence.drop 1 tokens')
+        Some (Reserved "]") -> Right (Json.Value.Array acc', Sequence.drop 1 tokens')
+        Some other          -> Left "Expected , or ]" -- TODO show what was found
+    Json.parseTokens tokens >>= parseRest
   case (Sequence.at 0) tokens of
     Some (Reserved "]") -> Right (Json.Value.Array [], Sequence.drop 1 tokens)
     _ -> go [] tokens
 
 Json.parseObject : [Json.Internal.Token] -> Either Text  (Json.Value, [Json.Internal.Token])
-Json.parseObject tokens = Left "TODO"
-
---    json_object = {}
---
---    t = tokens[0]
---    if t == JSON_RIGHTBRACE:
---        return json_object, tokens[1:]
---
---    while True:
---        json_key = tokens[0]
---        if type(json_key) is str:
---            tokens = tokens[1:]
---        else:
---            raise Exception('Expected string key, got: {}'.format(json_key))
---
---        if tokens[0] != JSON_COLON:
---            raise Exception('Expected colon after key in object, got: {}'.format(t))
---
---        json_value, tokens = parse(tokens[1:])
---
---        json_object[json_key] = json_value
---
---        t = tokens[0]
---        if t == JSON_RIGHTBRACE:
---            return json_object, tokens[1:]
---        elif t != JSON_COMMA:
---            raise Exception('Expected comma after pair in object, got: {}'.format(t))
---
---        tokens = tokens[1:]
---
---    raise Exception('Expected end-of-object brace')
-
-
-
+Json.parseObject tokens =
+  go : [(Text,Json.Value)] -> [Json.Internal.Token] -> Either Text (Json.Value, [Json.Internal.Token])
+  go acc tokens =
+    key = Sequence.at 0 tokens
+    colon = Sequence.at 1 tokens
+    case (key, colon) of
+      (Some (Textual key), Some(Reserved ":")) ->
+        parseRest et = case et of (el, tokens') ->
+          t = Sequence.at 0 tokens'
+          acc' = acc `snoc` (key, el)
+          case t of
+            None                -> Left "unclosed object"
+            Some (Reserved ",") -> go acc' (Sequence.drop 1 tokens')
+            Some (Reserved "}") -> Right (Json.Value.Object acc', Sequence.drop 1 tokens')
+            Some other          -> Left "Expected , or }" -- TODO show what was found
+        Json.parseTokens (Sequence.drop 2 tokens) >>= parseRest
+      other -> Left "Expecting a string followed by a colon" -- TODO show what was found
+  case (Sequence.at 0) tokens of
+    Some (Reserved "}") -> Right (Json.Value.Object [], Sequence.drop 1 tokens)
+    _ -> go [] tokens
 
 namespace Json.Internal where
 
@@ -476,8 +463,10 @@ expected = [ Reserved "{"
 > Json.parse "true"
 > Json.parse "[]"
 > Json.parse "[1,2,[true,false]]"
-> Json.parse "{\"foo\":123,\"bar\":[null,\"test\"]}"
 > Json.parse "\"\\\"\"" -- FIXME handle escapes, see https://json.org/
-
+> Json.parse "{}"
+> Json.parse "{\"foo\":123,\"bar\":[null,\"test\"]}"
+> Json.parse "{:}"
+> Json.parse "{\"test\":}"
 
 --> case (Json.parse "{\"foo\":123,\"bar\":[null,\"test\"]}") of Some a -> Json.format a
