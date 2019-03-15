@@ -298,7 +298,7 @@ Json.lex t =
             -- no pattern match on text yet
             case c of
               " "  -> go acc (Text.drop 1 t)
-              --"\n" -> go acc (Text.drop 1 t) --TODO https://github.com/unisonweb/unison/issues/387
+              "\n" -> go acc (Text.drop 1 t)
               "\t" -> go acc (Text.drop 1 t)
               "\r" -> go acc (Text.drop 1 t)
               "{"  -> go (acc ++ [Reserved "{"]) (Text.drop 1 t)
@@ -470,7 +470,7 @@ expected = [ Reserved "{"
 > Json.parse "\"\\\"\"" -- FIXME handle escapes, see https://json.org/
 > Json.parse "{}"
 > Json.parse "{\"foo\":123,\"bar\":[null,\"test\"]}"
-> Json.parse "   {    \"foo\"   \t:123   ,   \"bar\" : [null,   \"test\"]  }   "
+> Json.parse "\n   {    \"foo\"   \t:123   ,\n\n   \"bar\" : [null,   \"test\"]  }   "
 > Json.parse "{:}"
 > Json.parse "{\"test\":}"
 
